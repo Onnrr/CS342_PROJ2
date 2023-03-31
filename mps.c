@@ -16,9 +16,64 @@ struct Process {
 };
 struct Node {
     struct Node* prev;
-    struct Process p;
+    struct Process* p;
     struct Node* next;
 };
+
+void displayList(struct Node* root) {
+    if (root == NULL) {
+        printf("Queue is empty.\n");
+    }
+    else {
+        struct Node* current = root;
+
+        while (current != NULL) {
+            printf("%d\n", current->p);
+            current = current->next;
+        }
+        printf("\n");
+    }
+}
+
+struct Node* createNode(struct Process* p) {
+    struct Node* newNode = (struct Node*) malloc(sizeof(struct Node));
+
+    newNode->prev = newNode->next = NULL;
+    // kontrol
+    newNode->p = p;
+    return newNode;
+}
+
+void deleteNode(struct Node** root, struct Node** tail) {
+
+    struct Node* deleteNode = *root;
+    if (*root == NULL)
+        return;
+    if (*tail == deleteNode) {
+        *root = NULL;
+        *tail = NULL;
+    }
+    else {
+        *root = deleteNode->next;
+        deleteNode->next->prev = deleteNode->prev;
+    }
+    free(deleteNode);
+}
+
+void insertToEnd(struct Node** root, struct Node** tail, struct Node* newNode) {
+    // check if list is empty
+    if (*root == NULL) {
+        *root = newNode;
+        *tail = newNode;
+    }
+    else {
+        // insert to end
+        newNode->next = (*tail)->next;
+        (*tail)->next = newNode;
+        newNode->prev = *tail;
+        *tail = newNode;
+    }
+}
 
 void process_thread() {
     // LOOP
