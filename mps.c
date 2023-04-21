@@ -4,8 +4,13 @@
 #include <ctype.h>
 #include <string.h>
 #include <sys/time.h>
+#include <pthread.h>
 
-struct Process {
+struct Node** queues;
+struct Node** tails;
+pthread_mutex_t** locks;
+
+typedef struct Process {
     int pid;
     int burst_length;
     int arrival_time;
@@ -13,12 +18,12 @@ struct Process {
     int finish_time;
     int turnaround_time;
     int processor_id;
-};
-struct Node {
+} Process;
+typedef struct Node {
     struct Node* prev;
     struct Process* p;
     struct Node* next;
-};
+} Node;
 
 void displayList(struct Node* root) {
     if (root == NULL) {
@@ -28,7 +33,7 @@ void displayList(struct Node* root) {
         struct Node* current = root;
 
         while (current != NULL) {
-            printf("%d\n", current->p);
+            printf("%d\n", current->p->pid);
             current = current->next;
         }
         printf("\n");
@@ -145,10 +150,60 @@ int main(int argc, char *argv[]) {
     // Random variables
 
     // Get and record cur time
+    struct timeval cur_time;
+    gettimeofday(&cur_time, NULL);
+    
+    // Create queue(s)
+    if (strcmp(scheduling_approach, "S") == 0) {
+        queues = (Node**)malloc(sizeof(struct Node*));
+        tails = (Node**)malloc(sizeof(struct Node*));
+        locks = (pthread_mutex_t**)malloc(sizeof(pthread_mutex_t*));
+        queues[0] = NULL;
+        tails[0] = NULL;
+        pthread_mutex_t* mutex = (pthread_mutex_t*)malloc(sizeof(pthread_mutex_t));
+        pthread_mutex_init(mutex, NULL);
+        locks[0] = mutex;
+    }
+    else {
+        queues = (Node**)malloc(num_of_processors * sizeof(struct Node*));
+        tails = (Node**)malloc(num_of_processors * sizeof(struct Node*));
+        locks = (pthread_mutex_t**)malloc(num_of_processors * sizeof(pthread_mutex_t*));
+        for (int i = 0; i < num_of_processors; i++) {
+            queues[i] = NULL;
+            tails[i] = NULL;
+            pthread_mutex_t* mutex = (pthread_mutex_t*)malloc(sizeof(pthread_mutex_t));
+            pthread_mutex_init(mutex, NULL);
+            locks[i] = mutex;
+        }
+    }
 
     // Create processor threads
-    // Create queue(s)
+    for (int i = 0; i < num_of_processors; i++){
+        
+    }
 
+    FILE* fp;
+    char* line = NULL;
+    size_t len = 0;
+
+    // Open the file for reading
+    fp = fopen(infile_name, "r");
+    if (fp == NULL) {
+        printf("Error: Unable to open file\n");
+        return 1;
+    }
+
+    // Read the file line by line
+    while (getline(&line, &len, fp) != -1) {
+        // Process the line
+        printf("%s", line);
+    }
+
+    // Free the memory allocated for the line
+    free(line);
+
+    // Close the file
+    fclose(fp);
     // LOOP MAIN THREAD
     // Read in file line by line (or generate randomly)
 
