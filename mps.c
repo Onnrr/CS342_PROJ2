@@ -43,6 +43,51 @@ void process_thread() {
 
 int main(int argc, char *argv[]) {
     // Get and set args
+    int num_of_processors = 2;
+    char* scheduling_approach = "M";
+    char* queue_selection_method = "RM";
+    char* algorithm = "RR";
+    int quantum = 20;
+    char* infile_name = "in.txt";
+    int out_mode = 1;
+    char* outfile_name = "out.txt";
+
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "-n") == 0) {
+            num_of_processors = atoi(argv[i + 1]);
+        }
+        else if (strcmp(argv[i], "-a") == 0) {
+            scheduling_approach = argv[i + 1];
+            queue_selection_method = argv[i + 2];
+        }
+        else if (strcmp(argv[i], "-s") == 0) {
+            algorithm = argv[i + 1];
+            quantum = atoi(argv[i + 2]);
+        }
+        else if (strcmp(argv[i], "-i") == 0) {
+            infile_name = argv[i + 1];
+        }
+        else if (strcmp(argv[i], "-m") == 0) {
+            out_mode = atoi(argv[i + 1]);
+        }
+        else if (strcmp(argv[i], "-o") == 0) {
+            outfile_name = argv[i + 1];
+        }
+        else if (strcmp(argv[i], "-r") == 0) {
+            // TODO
+        }
+    }
+
+    printf("Num of processors = %d\n", num_of_processors);
+    printf("Sched approach = %s\n", scheduling_approach);
+    printf("Queue selection method = %s\n", queue_selection_method);
+    printf("Algorithm = %s\n", algorithm);
+    printf("quantum = %d\n", quantum);
+    printf("infile name = %s\n", infile_name);
+    printf("out mode = %d\n", out_mode);
+    printf("outfile name = %s\n", outfile_name);
+
+    // Random variables
 
     // Get and record cur time
 
