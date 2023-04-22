@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include <string.h>
 #include <sys/time.h>
+#include <unistd.h>
 #include <pthread.h>
 
 struct Node** queues;
@@ -33,7 +34,7 @@ void displayList(struct Node* root) {
         struct Node* current = root;
 
         while (current != NULL) {
-            printf("%d\n", current->p->pid);
+            printf("- %d\n", current->p->pid);
             current = current->next;
         }
         printf("\n");
@@ -101,6 +102,29 @@ void process_thread() {
         
 }
 
+int findLeastLoad(int num_of_proc) {
+    int min;
+    int minIndex = 0;
+
+
+    for (int i = 0; i < num_of_proc; i++) {
+        Node* cur = queues[i];
+        int sum = 0;
+        while (cur != NULL) {
+            sum += cur->p->remaining_time;
+            cur = cur->next;
+        }
+        if (i == 0) {
+            min = sum;
+        }
+        if (sum < min) {
+            min = sum;
+            minIndex = i;
+        }
+    }
+    return minIndex;
+}
+
 int main(int argc, char *argv[]) {
     // Get and set args
     int num_of_processors = 2;
@@ -152,7 +176,7 @@ int main(int argc, char *argv[]) {
     // Get and record cur time
     struct timeval cur_time;
     gettimeofday(&cur_time, NULL);
-    
+    printf("1\n");
     // Create queue(s)
     if (strcmp(scheduling_approach, "S") == 0) {
         queues = (Node**)malloc(sizeof(struct Node*));
@@ -176,6 +200,7 @@ int main(int argc, char *argv[]) {
             locks[i] = mutex;
         }
     }
+    printf("2\n");
 
     // Create processor threads
     for (int i = 0; i < num_of_processors; i++){
@@ -185,18 +210,66 @@ int main(int argc, char *argv[]) {
     FILE* fp;
     char* line = NULL;
     size_t len = 0;
-
+    ssize_t read;
+    
     // Open the file for reading
     fp = fopen(infile_name, "r");
     if (fp == NULL) {
         printf("Error: Unable to open file\n");
         return 1;
     }
+    else {
+        printf("Opened File\n");
+    }
 
-    // Read the file line by line
-    while (getline(&line, &len, fp) != -1) {
+    int cur_id = 0;
+
+    while ((read = getline(&line, &len, fp)) != -1) {
         // Process the line
-        printf("%s", line);
+        char* keyword = strtok(line, " ");
+        char* burst = strtok(NULL, " ");
+        int burst_l = atoi(burst);
+
+        Process *p = (Process*)malloc(sizeof(struct Process));
+        p->pid = cur_id;
+        p->burst_length = burst_l;
+        p->remaining_time = burst_l;
+
+        struct timeval arrival;
+        gettimeofday(&arrival, NULL);
+        p->arrival_time = arrival.tv_sec;
+
+        if (strcmp(scheduling_approach,"S") == 0) {
+            pthread_mutex_lock(locks[0]);
+            insertToEnd(&queues[0],&tails[0],createNode(p));
+            pthread_mutex_unlock(locks[0]);
+        }
+        else if (strcmp(scheduling_approach,"M") == 0) {
+            int q_index;
+            if (strcmp(queue_selection_method,"RM") == 0) {
+                printf("\nIn queue selection\n");
+                printf("Cur id = %d\n", cur_id);
+                q_index = cur_id % num_of_processors;
+                printf("Selected queue = %d\n", q_index);
+            }
+            else if (strcmp(queue_selection_method,"LM") == 0) {
+                printf("\nIn load queue selection\n");
+                q_index = findLeastLoad(num_of_processors);
+            }
+            pthread_mutex_lock(locks[q_index]);
+            insertToEnd(&queues[q_index],&tails[q_index],createNode(p));
+            pthread_mutex_unlock(locks[q_index]);
+        }
+
+        read = getline(&line, &len, fp);
+        if (read == -1) {
+            break;
+        }
+        keyword = strtok(line, " ");
+        char* inter_arrival = strtok(NULL, " ");
+        int iat = atoi(inter_arrival);
+        
+        cur_id++;
     }
 
     // Free the memory allocated for the line
@@ -204,32 +277,11 @@ int main(int argc, char *argv[]) {
 
     // Close the file
     fclose(fp);
-    // LOOP MAIN THREAD
-    // Read in file line by line (or generate randomly)
 
-        // Create process object
-        // Set arrival time values (compare with initial)
-        // Sleep for the iat value
-
-        // IF single queue
-            // IF SJF
-                // Add to queue ordered by burst length
-            // ELSE
-                // Add to queue
-        // ELSE (Multi queue)
-            // IF RR
-                // IF SJF
-                    // Add to next queue ordered by burst length
-                // ELSE
-                    // Add to next queue
-            // ELSE IF LB
-                // IF SJF
-                    // Add to queue with least load ordered by burst length
-                // ELSE
-                    // Add to queue with least load
-        // Read next input
-
-    // Add dummy node to all queues
+    for (int i = 0; i < num_of_processors; i++) {
+        printf("Queue %d\n", i);
+        displayList(queues[i]);
+    }
 
     return 0;
 }
