@@ -9,6 +9,9 @@
 
 struct Node** queues;
 struct Node** tails;
+struct Node* doneProcessesHead;
+struct Node* doneProcessesTail;
+pthread_mutex_t* doneProcessesLock;
 pthread_mutex_t** locks;
 struct timeval start;
 
@@ -26,6 +29,11 @@ typedef struct Node {
     struct Process* p;
     struct Node* next;
 } Node;
+typedef struct Arguments {
+    int index;
+    char* algorithm;
+    int q;
+} Arguments;
 
 void displayList(struct Node* root) {
     if (root == NULL) {
@@ -55,37 +63,6 @@ struct Node* createNode(struct Process* p) {
     return newNode;
 }
 
-void deleteNode(struct Node** root, struct Node** tail) {
-
-    struct Node* deleteNode = *root;
-    if (*root == NULL)
-        return;
-    if (*tail == deleteNode) {
-        *root = NULL;
-        *tail = NULL;
-    }
-    else {
-        *root = deleteNode->next;
-        deleteNode->next->prev = deleteNode->prev;
-    }
-    free(deleteNode);
-}
-
-void insertToEnd(struct Node** root, struct Node** tail, struct Node* newNode) {
-    // check if list is empty
-    if (*root == NULL) {
-        *root = newNode;
-        *tail = newNode;
-    }
-    else {
-        // insert to end
-        newNode->next = (*tail)->next;
-        (*tail)->next = newNode;
-        newNode->prev = *tail;
-        *tail = newNode;
-    }
-}
-
 Node* findShortest(int queue_index) {
     Node* cur = queues[queue_index];
 
@@ -93,7 +70,7 @@ Node* findShortest(int queue_index) {
 
     while (cur != NULL) {
         if (cur->p->remaining_time < minNode->p->remaining_time) {
-            minNode = p;
+            minNode = cur;
         }
         cur = cur->next;
     }
@@ -123,25 +100,160 @@ int findLeastLoad(int num_of_proc) {
     return minIndex;
 }
 
-void process_thread() {
-    // LOOP
-        // IF queue empty (multi queue olursa kendi queuesu)
-            // sleep 1ms continue;
-        // ELSE IF FCFS 
-            // sleep for the duration of next process
-            // remove process from queue
-        // ELSE IF SJF
-            // sleep for the duration of next process
-            // remove process from queue
-        // ELSE IF RR
-            // IF next process remaining time < Q
-                // sleep for process duration
-                // Remove process from queue
-            // ELSE
-                // Sleep for Q
-                // Decrease process remaining time by Q
-                // Remove from head add to tail
-        
+struct Node* retrieveFirstNode(struct Node** root, struct Node** tail) {
+    return retrieveNode(&root, &tail, root);
+}
+
+struct Node* retrieveNode(struct Node** root, struct Node** tail, struct Node* deleteNode) {
+
+    // empty list
+    if (*root == NULL || deleteNode == NULL)
+        return NULL;
+    else {
+        // delete head
+        if (*root == deleteNode) {
+            if (*root == *tail) {
+                *root = NULL;
+                *tail = NULL;
+            }
+            else {
+                deleteNode->next->prev = NULL;
+                *root = deleteNode->next;
+            }
+        }
+        else if (*tail == deleteNode) {
+            (*tail)->prev->next = NULL;
+            (*tail) = deleteNode->prev;
+            deleteNode->prev = NULL;
+        }
+        else {
+            deleteNode->next->prev = deleteNode->prev;
+            deleteNode->prev->next = deleteNode->next;
+        }   
+
+        return deleteNode;
+    }
+}
+
+void insertToEnd(struct Node** root, struct Node** tail, struct Node* newNode) {
+    // check if list is empty
+    if (*root == NULL) {
+        *root = newNode;
+        *tail = newNode;
+    }
+    else {
+        // insert to end
+        newNode->next = (*tail)->next;
+        (*tail)->next = newNode;
+        newNode->prev = *tail;
+        *tail = newNode;
+    }
+}
+
+void insertAsc(struct Node** root, struct Node** tail, struct Node* newNode) {
+    if (*root == NULL) {
+        *root = newNode;
+        *tail = newNode;
+    }
+    else if ((*root)->p->pid < newNode->p->pid) {
+        newNode->next = *root;
+        newNode->next->prev = newNode;
+        *root = newNode;
+    }
+    else {
+        // insert in the middle or end
+        struct Node* cur = *root;
+
+        while (cur->next != NULL && cur->next->p->pid  >= newNode->p->pid ) {
+            cur = cur->next;
+        }
+
+        if (cur->next != NULL) {
+            newNode->next = cur->next;
+            newNode->next->prev = newNode;
+            cur->next = newNode;
+            newNode->prev = cur;
+        }
+        else {
+            newNode->next = (*tail)->next;
+            (*tail)->next = newNode;
+            newNode->prev = *tail;
+            *tail = newNode;
+        }
+
+    }
+}
+
+void process_thread(void *arguments) {
+    struct Arguments *args = arguments;
+    int index = args->index;
+    
+    while (1) {
+        mutex_lock(&locks[index]);
+        if (queues[index] == NULL) {
+            sleep(1);
+        }
+        else {
+            int burstFinished = 0;
+            struct Node* cur;
+
+            if (cur->p->pid = -1) {
+                mutex_unlock(&locks[index]);
+                pthread_exit(0);
+            }
+            else if (strcmp(args->algorithm, "FCFS")) {
+                // retrieve process from the queue
+                cur = retrieveFirstNode(&queues[index], &tails[index]);
+                mutex_unlock(&locks[index]);
+
+                // sleep for the duration of burst
+                sleep(cur->p->burst_length);
+                burstFinished = 1;
+            }
+            else if (strcmp(args->algorithm, "SJF")) {
+                // find and retrieve shortest node
+                cur = retrieveNode(&queues[index], &tails[index], findShortest(index));
+                mutex_unlock(&locks[index]);
+
+                // sleep for duration of burst
+                sleep(cur->p->burst_length);
+                burstFinished = 1;
+            }
+            else { // default RR
+                // retrieve process from the queue
+                cur = retrieveFirstNode(&queues[index], &tails[index]);
+                mutex_unlock(&locks[index]);
+
+                if (cur->p->remaining_time <= args->q) {
+                    sleep(cur->p->remaining_time);
+                    burstFinished = 1;
+                }
+                else {
+                    sleep(args->q);
+                    // update remaining time and add to tail
+                    cur->p->remaining_time = cur->p->remaining_time - args->q;
+                    mutex_lock(&locks[index]);
+                    insertToEnd(&queues[index], &tails[index], cur);
+                    mutex_unlock(&locks[index]);
+                }
+            }
+            
+
+            if (burstFinished) {
+                // update information of process
+                struct Process* p = cur->p;
+                p->finish_time = gettimeofday(&start, NULL);
+                p->turnaround_time = p->finish_time - p->arrival_time;
+                p->remaining_time = 0;
+                p->processor_id = index;
+
+                // add to finished processes list
+                mutex_lock(&doneProcessesLock);
+                insertAsc(&doneProcessesHead, &doneProcessesTail, cur);
+                mutex_unlock(&doneProcessesLock);
+            }
+        }
+    }       
 }
 
 int main(int argc, char *argv[]) {
