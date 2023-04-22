@@ -10,6 +10,7 @@
 struct Node** queues;
 struct Node** tails;
 pthread_mutex_t** locks;
+struct timeval start;
 
 typedef struct Process {
     int pid;
@@ -34,9 +35,13 @@ void displayList(struct Node* root) {
         struct Node* current = root;
 
         while (current != NULL) {
-            printf("- %d\n", current->p->pid);
+            printf("----------------\n");
+            printf("- id: %d\n", current->p->pid);
+            printf("- burst length: %d\n", current->p->burst_length);
+            printf("- arrival time: %d\n", current->p->arrival_time);
             current = current->next;
         }
+        printf("----------------\n");
         printf("\n");
     }
 }
@@ -81,25 +86,18 @@ void insertToEnd(struct Node** root, struct Node** tail, struct Node* newNode) {
     }
 }
 
-void process_thread() {
-    // LOOP
-        // IF queue empty (multi queue olursa kendi queuesu)
-            // sleep 1ms continue;
-        // ELSE IF FCFS 
-            // sleep for the duration of next process
-            // remove process from queue
-        // ELSE IF SJF
-            // sleep for the duration of next process
-            // remove process from queue
-        // ELSE IF RR
-            // IF next process remaining time < Q
-                // sleep for process duration
-                // Remove process from queue
-            // ELSE
-                // Sleep for Q
-                // Decrease process remaining time by Q
-                // Remove from head add to tail
-        
+Node* findShortest(int queue_index) {
+    Node* cur = queues[queue_index];
+
+    Node* minNode = cur;
+
+    while (cur != NULL) {
+        if (cur->p->remaining_time < minNode->p->remaining_time) {
+            minNode = p;
+        }
+        cur = cur->next;
+    }
+    return minNode;
 }
 
 int findLeastLoad(int num_of_proc) {
@@ -123,6 +121,27 @@ int findLeastLoad(int num_of_proc) {
         }
     }
     return minIndex;
+}
+
+void process_thread() {
+    // LOOP
+        // IF queue empty (multi queue olursa kendi queuesu)
+            // sleep 1ms continue;
+        // ELSE IF FCFS 
+            // sleep for the duration of next process
+            // remove process from queue
+        // ELSE IF SJF
+            // sleep for the duration of next process
+            // remove process from queue
+        // ELSE IF RR
+            // IF next process remaining time < Q
+                // sleep for process duration
+                // Remove process from queue
+            // ELSE
+                // Sleep for Q
+                // Decrease process remaining time by Q
+                // Remove from head add to tail
+        
 }
 
 int main(int argc, char *argv[]) {
@@ -173,10 +192,9 @@ int main(int argc, char *argv[]) {
 
     // Random variables
 
-    // Get and record cur time
-    struct timeval cur_time;
-    gettimeofday(&cur_time, NULL);
-    printf("1\n");
+    // Get and record start time
+    gettimeofday(&start, NULL);
+
     // Create queue(s)
     if (strcmp(scheduling_approach, "S") == 0) {
         queues = (Node**)malloc(sizeof(struct Node*));
@@ -200,7 +218,6 @@ int main(int argc, char *argv[]) {
             locks[i] = mutex;
         }
     }
-    printf("2\n");
 
     // Create processor threads
     for (int i = 0; i < num_of_processors; i++){
@@ -218,9 +235,6 @@ int main(int argc, char *argv[]) {
         printf("Error: Unable to open file\n");
         return 1;
     }
-    else {
-        printf("Opened File\n");
-    }
 
     int cur_id = 0;
 
@@ -230,14 +244,14 @@ int main(int argc, char *argv[]) {
         char* burst = strtok(NULL, " ");
         int burst_l = atoi(burst);
 
+        struct timeval arrival;
+        gettimeofday(&arrival, NULL);
+
         Process *p = (Process*)malloc(sizeof(struct Process));
         p->pid = cur_id;
         p->burst_length = burst_l;
         p->remaining_time = burst_l;
-
-        struct timeval arrival;
-        gettimeofday(&arrival, NULL);
-        p->arrival_time = arrival.tv_sec;
+        p->arrival_time = arrival.tv_usec;
 
         if (strcmp(scheduling_approach,"S") == 0) {
             pthread_mutex_lock(locks[0]);
@@ -255,6 +269,7 @@ int main(int argc, char *argv[]) {
             else if (strcmp(queue_selection_method,"LM") == 0) {
                 printf("\nIn load queue selection\n");
                 q_index = findLeastLoad(num_of_processors);
+                printf("Selected queue = %d\n", q_index);
             }
             pthread_mutex_lock(locks[q_index]);
             insertToEnd(&queues[q_index],&tails[q_index],createNode(p));
@@ -268,8 +283,27 @@ int main(int argc, char *argv[]) {
         keyword = strtok(line, " ");
         char* inter_arrival = strtok(NULL, " ");
         int iat = atoi(inter_arrival);
-        
+    
         cur_id++;
+
+        // TODO Sleep
+    }
+
+    // Add dummy Nodes
+    Process *p = (Process*)malloc(sizeof(struct Process));
+    p->pid = -1;
+    Node* dummy = createNode(p);
+    if (strcmp(scheduling_approach, "S") == 0) {
+        pthread_mutex_lock(locks[0]);
+        insertToEnd(&queues[0],&tails[0],dummy);
+        pthread_mutex_unlock(locks[0]);
+    }
+    else {
+        for (int i = 0; i < num_of_processors; i++) {
+            pthread_mutex_lock(locks[i]);
+            insertToEnd(&queues[i],&tails[i],dummy);
+            pthread_mutex_unlock(locks[i]);
+        }
     }
 
     // Free the memory allocated for the line
