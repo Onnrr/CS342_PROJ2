@@ -35,6 +35,13 @@ typedef struct Arguments {
     int q;
 } Arguments;
 
+int timeval_diff_ms(struct timeval* t1, struct timeval* t2) {
+    int diff_sec = t2->tv_sec - t1->tv_sec;
+    int diff_usec = t2->tv_usec - t1->tv_usec;
+    int diff_ms = diff_sec * 1000 + diff_usec / 1000;
+    return diff_ms;
+}
+
 void displayList(struct Node* root) {
     if (root == NULL) {
         printf("Queue is empty.\n");
@@ -100,10 +107,6 @@ int findLeastLoad(int num_of_proc) {
     return minIndex;
 }
 
-struct Node* retrieveFirstNode(struct Node** root, struct Node** tail) {
-    return retrieveNode(&root, &tail, root);
-}
-
 struct Node* retrieveNode(struct Node** root, struct Node** tail, struct Node* deleteNode) {
 
     // empty list
@@ -133,6 +136,10 @@ struct Node* retrieveNode(struct Node** root, struct Node** tail, struct Node* d
 
         return deleteNode;
     }
+}
+
+struct Node* retrieveFirstNode(struct Node** root, struct Node** tail) {
+    return retrieveNode(&root, &tail, root);
 }
 
 void insertToEnd(struct Node** root, struct Node** tail, struct Node* newNode) {
@@ -184,7 +191,7 @@ void insertAsc(struct Node** root, struct Node** tail, struct Node* newNode) {
     }
 }
 
-void process_thread(void *arguments) {
+void* process_thread(void *arguments) {
     struct Arguments *args = arguments;
     int index = args->index;
     
@@ -332,8 +339,14 @@ int main(int argc, char *argv[]) {
     }
 
     // Create processor threads
+    pthread_t threads[num_of_processors];
     for (int i = 0; i < num_of_processors; i++){
-        
+        Arguments args;
+        args.index = i;
+        args.algorithm = algorithm;
+        args.q = quantum;
+
+        pthread_create(&threads[i], NULL, process_thread, (void*) &args);
     }
 
     FILE* fp;
@@ -363,7 +376,7 @@ int main(int argc, char *argv[]) {
         p->pid = cur_id;
         p->burst_length = burst_l;
         p->remaining_time = burst_l;
-        p->arrival_time = arrival.tv_usec;
+        p->arrival_time = timeval_diff_ms(&start, &arrival);
 
         if (strcmp(scheduling_approach,"S") == 0) {
             pthread_mutex_lock(locks[0]);
@@ -398,7 +411,7 @@ int main(int argc, char *argv[]) {
     
         cur_id++;
 
-        // TODO Sleep
+        sleep(iat / 1000);
     }
 
     // Add dummy Nodes
@@ -423,6 +436,11 @@ int main(int argc, char *argv[]) {
 
     // Close the file
     fclose(fp);
+
+    // Wait for threads
+    for (int i = 0; i < num_of_processors; i++) {
+        pthread_join(threads[i], NULL);
+    }
 
     for (int i = 0; i < num_of_processors; i++) {
         printf("Queue %d\n", i);
