@@ -6,6 +6,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <math.h>
 
 struct Node** queues;
 struct Node** tails;
@@ -42,11 +43,44 @@ int queue_length(struct Node *root) {
     return 1 + queue_length(root->next);
 }
 
+int generateRandomInt(int min, int max, int mean)
+{
+    double lambda = 1.0 / mean;
+    double u, x;
+    int a;
+
+    do {
+        // Generate exponential random value x
+        u = (double)rand() / RAND_MAX;
+        x = -log(1 - u) / lambda;
+
+        // Round x to an integer
+        a = (int)round(x);
+
+    } while (a < min || a > max);
+
+    return a;
+}
+
+void freeQueue(Node* root) {
+    Node *ptr = root;
+    while (ptr != NULL) {
+        Node *temp = ptr->next;
+        ptr->next = NULL;
+        ptr->prev = NULL;
+        if (ptr->p != NULL) {
+            free(ptr->p);
+        }
+        free(ptr);
+        ptr = temp;
+    }
+}
+
 int timeval_diff_ms(struct timeval* t1, struct timeval* t2) {
     int diff_sec = t2->tv_sec - t1->tv_sec;
     int diff_usec = t2->tv_usec - t1->tv_usec;
-    int diff_ms = diff_sec * 1000 + diff_usec / 1000;
-    return diff_ms;
+    int diff_us = diff_sec * 1000000 + diff_usec;
+    return diff_us;
 }
 
 void displayList(struct Node* root) {
@@ -95,8 +129,8 @@ Node* findShortest(int queue_index) {
 int findLeastLoad(int num_of_proc) {
     int min;
     int minIndex = 0;
-
     for (int i = 0; i < num_of_proc; i++) {
+        pthread_mutex_lock(locks[i]);
         Node* cur = queues[i];
         int sum = 0;
         while (cur != NULL) {
@@ -110,6 +144,7 @@ int findLeastLoad(int num_of_proc) {
             min = sum;
             minIndex = i;
         }
+        pthread_mutex_unlock(locks[i]);
     }
     return minIndex;
 }
@@ -230,7 +265,7 @@ void* process_thread(void *arguments) {
         pthread_mutex_lock(locks[index]);
         if (queues[index] == NULL) {
             pthread_mutex_unlock(locks[index]);
-            sleep(1 / 1000);
+            usleep(1);
         }
         else {
             int burstFinished = 0;
@@ -247,44 +282,40 @@ void* process_thread(void *arguments) {
                 else 
                     cur = retrieveNode(&queues[index], &tails[index], findShortest(index));
                 
-                pthread_mutex_unlock(locks[index]);
 
                 if (cur->p->pid == -1) {
-                    pthread_mutex_lock(locks[index]);
                     insertToHead(&queues[index], &tails[index], cur);
-                    pthread_mutex_unlock(locks[index]);
                     pthread_exit(0);
                 }
 
+                pthread_mutex_unlock(locks[index]);
                 // sleep for the duration of burst
-                sleep(cur->p->burst_length / 1000);
+                usleep(cur->p->burst_length);
                 burstFinished = 1;
             }
             else { // default RR
                 // retrieve process from the queue
                 cur = retrieveFirstNode(&queues[index], &tails[index]);
-                pthread_mutex_unlock(locks[index]);
-
+                
                 if (cur->p->pid == -1 && queue_length(queues[index]) == 0) {
                     printf("Queue length is 0 and we found dummy\n");
-                    pthread_mutex_lock(locks[index]);
                     insertToHead(&queues[index], &tails[index], cur);
                     pthread_mutex_unlock(locks[index]);
                     pthread_exit(0);
                 }
                 else if (cur->p->pid == -1) {
-                    pthread_mutex_lock(locks[index]);
                     insertToEnd(&queues[index], &tails[index], cur);
                     pthread_mutex_unlock(locks[index]);
                     continue;
                 }
+                pthread_mutex_unlock(locks[index]);
 
                 if (cur->p->remaining_time <= args->q) {
-                    sleep(cur->p->remaining_time / 1000);
+                    usleep(cur->p->remaining_time);
                     burstFinished = 1;
                 }
                 else {
-                    sleep(args->q / 1000);
+                    usleep(args->q);
                     // update remaining time and add to tail
                     cur->p->remaining_time = cur->p->remaining_time - args->q;
                     pthread_mutex_lock(locks[index]);
@@ -296,17 +327,19 @@ void* process_thread(void *arguments) {
 
             if (burstFinished) {
                 // update information of process
-                struct Process* p = cur->p;
+                struct Process* p = (Process*)malloc(sizeof(struct Process));
                 struct timeval burstFinishTime;
                 p->finish_time = gettimeofday(&burstFinishTime, NULL);
-                p->turnaround_time = p->finish_time - p->arrival_time;
+                p->turnaround_time = p->finish_time - cur->p->arrival_time;
+                p->arrival_time = cur->p->arrival_time;
                 p->remaining_time = 0;
                 p->processor_id = index;
 
                 // add to finished processes list
                 pthread_mutex_lock(doneProcessesLock);
-                insertAsc(&doneProcessesHead, &doneProcessesTail, cur);
+                insertAsc(&doneProcessesHead, &doneProcessesTail, createNode(p));
                 pthread_mutex_unlock(doneProcessesLock);
+                
             }
         }
     }       
@@ -315,13 +348,27 @@ void* process_thread(void *arguments) {
 int main(int argc, char *argv[]) {
     // Get and set args
     int num_of_processors = 2;
-    char* scheduling_approach = "S";
+    char* scheduling_approach = "M";
     char* queue_selection_method = "RM";
     char* algorithm = "RR";
     int quantum = 20;
     char* infile_name = "in.txt";
     int out_mode = 1;
     char* outfile_name = "out.txt";
+
+    // Burst will be generated random if random > 0, read file if random == 0
+    int random = 1;
+
+    // Random variables
+    int iat_mean = 200;
+    int iat_min = 10;
+    int iat_max = 1000;
+
+    int burst_mean = 100;
+    int burst_min = 10;
+    int burst_max = 500;
+
+    int pc = 10;
 
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "-n") == 0) {
@@ -336,6 +383,7 @@ int main(int argc, char *argv[]) {
             quantum = atoi(argv[i + 2]);
         }
         else if (strcmp(argv[i], "-i") == 0) {
+            random--;
             infile_name = argv[i + 1];
         }
         else if (strcmp(argv[i], "-m") == 0) {
@@ -345,7 +393,16 @@ int main(int argc, char *argv[]) {
             outfile_name = argv[i + 1];
         }
         else if (strcmp(argv[i], "-r") == 0) {
-            // TODO
+            random++;
+            iat_mean = atoi(argv[i + 1]);
+            iat_min = atoi(argv[i + 2]);
+            iat_max = atoi(argv[i + 3]);
+
+            burst_mean = atoi(argv[i + 4]);
+            burst_min = atoi(argv[i + 5]);
+            burst_max = atoi(argv[i + 6]);
+
+            pc = atoi(argv[i + 7]);
         }
     }
 
@@ -353,10 +410,13 @@ int main(int argc, char *argv[]) {
     printf("Sched approach = %s\n", scheduling_approach);
     printf("Queue selection method = %s\n", queue_selection_method);
     printf("Algorithm = %s\n", algorithm);
-    printf("quantum= %d\n", quantum);
+    printf("quantum = %d\n", quantum);
     printf("infile name = %s\n", infile_name);
     printf("out mode = %d\n", out_mode);
     printf("outfile name = %s\n", outfile_name);
+
+    printf("Iat variables %d %d %d \n", iat_mean, iat_min, iat_max);
+    printf("Burst variables %d %d %d \n", burst_mean, burst_min, burst_max);
 
     // Random variables
 
@@ -408,64 +468,111 @@ int main(int argc, char *argv[]) {
         pthread_create(&threads[i], NULL, process_thread, (void*) &args[i]);
     }
 
-    FILE* fp;
-    char* line = NULL;
-    size_t len = 0;
-    ssize_t read;
-    
-    // Open the file for reading
-    fp = fopen(infile_name, "r");
-    if (fp == NULL) {
-        printf("Error: Unable to open file\n");
-        return 1;
+    if (random == 0) {
+        FILE* fp;
+        char* line = NULL;
+        size_t len = 0;
+        ssize_t read;
+        
+        // Open the file for reading
+        fp = fopen(infile_name, "r");
+        if (fp == NULL) {
+            printf("Error: Unable to open file\n");
+            return 1;
+        }
+        int cur_id = 0;
+        while ((read = getline(&line, &len, fp)) != -1) {
+            // Process the line
+            char* keyword = strtok(line, " ");
+            char* burst = strtok(NULL, " ");
+            int burst_l = atoi(burst);
+
+            struct timeval arrival;
+            gettimeofday(&arrival, NULL);
+
+            Process *p = (Process*)malloc(sizeof(struct Process));
+            p->pid = cur_id;
+            p->burst_length = burst_l;
+            p->remaining_time = burst_l;
+            p->arrival_time = timeval_diff_ms(&start, &arrival);
+
+            if (strcmp(scheduling_approach,"S") == 0) {
+                pthread_mutex_lock(locks[0]);
+                insertToEnd(&queues[0],&tails[0],createNode(p));
+                pthread_mutex_unlock(locks[0]);
+            }
+            else if (strcmp(scheduling_approach,"M") == 0) {
+                int q_index;
+                if (strcmp(queue_selection_method,"RM") == 0) {
+                    q_index = cur_id % num_of_processors;
+                }
+                else if (strcmp(queue_selection_method,"LM") == 0) {
+                    q_index = findLeastLoad(num_of_processors);
+                }
+                pthread_mutex_lock(locks[q_index]);
+                insertToEnd(&queues[q_index],&tails[q_index],createNode(p));
+                pthread_mutex_unlock(locks[q_index]);
+            }
+
+            read = getline(&line, &len, fp);
+            if (read == -1) {
+                break;
+            }
+            keyword = strtok(line, " ");
+            char* inter_arrival = strtok(NULL, " ");
+            int iat = atoi(inter_arrival);
+        
+            cur_id++;
+
+            usleep(iat);
+        }
+        // Free the memory allocated for the line
+        free(line);
+
+        // Close the file
+        fclose(fp);
     }
+    else { // Random
+        int cur_id = 0;
+        int count = 0;
+        while (count < pc) {
+            // Generate random int
+            int burst_l = generateRandomInt(burst_min, burst_max, burst_mean);
 
-    int cur_id = 0;
+            struct timeval arrival;
+            gettimeofday(&arrival, NULL);
 
-    while ((read = getline(&line, &len, fp)) != -1) {
-        // Process the line
-        char* keyword = strtok(line, " ");
-        char* burst = strtok(NULL, " ");
-        int burst_l = atoi(burst);
+            Process *p = (Process*)malloc(sizeof(struct Process));
+            p->pid = cur_id;
+            p->burst_length = burst_l;
+            p->remaining_time = burst_l;
+            p->arrival_time = timeval_diff_ms(&start, &arrival);
 
-        struct timeval arrival;
-        gettimeofday(&arrival, NULL);
-
-        Process *p = (Process*)malloc(sizeof(struct Process));
-        p->pid = cur_id;
-        p->burst_length = burst_l;
-        p->remaining_time = burst_l;
-        p->arrival_time = timeval_diff_ms(&start, &arrival);
-
-        if (strcmp(scheduling_approach,"S") == 0) {
-            pthread_mutex_lock(locks[0]);
-            insertToEnd(&queues[0],&tails[0],createNode(p));
-            pthread_mutex_unlock(locks[0]);
-        }
-        else if (strcmp(scheduling_approach,"M") == 0) {
-            int q_index;
-            if (strcmp(queue_selection_method,"RM") == 0) {
-                q_index = cur_id % num_of_processors;
+            if (strcmp(scheduling_approach,"S") == 0) {
+                pthread_mutex_lock(locks[0]);
+                insertToEnd(&queues[0],&tails[0],createNode(p));
+                pthread_mutex_unlock(locks[0]);
             }
-            else if (strcmp(queue_selection_method,"LM") == 0) {
-                q_index = findLeastLoad(num_of_processors);
+            else if (strcmp(scheduling_approach,"M") == 0) {
+                int q_index;
+                if (strcmp(queue_selection_method,"RM") == 0) {
+                    q_index = cur_id % num_of_processors;
+                }
+                else if (strcmp(queue_selection_method,"LM") == 0) {
+                    q_index = findLeastLoad(num_of_processors);
+                }
+                pthread_mutex_lock(locks[q_index]);
+                insertToEnd(&queues[q_index],&tails[q_index],createNode(p));
+                pthread_mutex_unlock(locks[q_index]);
             }
-            pthread_mutex_lock(locks[q_index]);
-            insertToEnd(&queues[q_index],&tails[q_index],createNode(p));
-            pthread_mutex_unlock(locks[q_index]);
-        }
 
-        read = getline(&line, &len, fp);
-        if (read == -1) {
-            break;
-        }
-        keyword = strtok(line, " ");
-        char* inter_arrival = strtok(NULL, " ");
-        int iat = atoi(inter_arrival);
-    
-        cur_id++;
+            int iat = generateRandomInt(iat_min, iat_max, iat_mean);
+        
+            cur_id++;
 
-        sleep(iat / 1000);
+            usleep(iat);
+            count++;
+        }
     }
 
     // Add dummy Nodes
@@ -494,22 +601,31 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Free the memory allocated for the line
-    free(line);
-
-    // Close the file
-    fclose(fp);
-
     // Wait for threads
     for (int i = 0; i < num_of_processors; i++) {
         printf("Thread %d has finished", i);
         pthread_join(threads[i], NULL);
     }
 
-    for (int i = 0; i < num_of_processors; i++) {
-        printf("Queue %d\n", i);
-        displayList(queues[i]);
-    }
+    // Free memory
+    // if (strcmp(scheduling_approach, "S") == 0) {
+    //     freeQueue(queues[0]);
+    //     free(locks[0]);
+    // }
+    // else {
+    //     for (int i = 0; i < num_of_processors; i++) {
+    //         freeQueue(queues[i]);
+    //         free(locks[i]);
+    //     }
+    // }
+
+    // freeQueue(doneProcessesHead);
+    // free(doneProcessesLock);
+    
+    // free(queues);
+    // free(tails);
+    // free(locks);
+
 
     // delete finished does not work
 
