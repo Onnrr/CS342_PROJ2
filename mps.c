@@ -71,7 +71,9 @@ void freeQueue(Node* root) {
         if (ptr->p != NULL) {
             free(ptr->p);
         }
-        free(ptr);
+        if (ptr != NULL) {
+            free(ptr);
+        }
         ptr = temp;
     }
 }
@@ -327,17 +329,20 @@ void* process_thread(void *arguments) {
 
             if (burstFinished) {
                 // update information of process
-                struct Process* p = (Process*)malloc(sizeof(struct Process));
+                struct Process* p = cur->p;
                 struct timeval burstFinishTime;
-                p->finish_time = gettimeofday(&burstFinishTime, NULL);
-                p->turnaround_time = p->finish_time - cur->p->arrival_time;
-                p->arrival_time = cur->p->arrival_time;
+                gettimeofday(&burstFinishTime, NULL);
+                p->finish_time = timeval_diff_ms(&start, &burstFinishTime);
+                p->turnaround_time = p->finish_time - p->arrival_time;
                 p->remaining_time = 0;
                 p->processor_id = index;
 
+                cur->prev = NULL;
+                cur->next = NULL;
+
                 // add to finished processes list
                 pthread_mutex_lock(doneProcessesLock);
-                insertAsc(&doneProcessesHead, &doneProcessesTail, createNode(p));
+                insertAsc(&doneProcessesHead, &doneProcessesTail, cur);
                 pthread_mutex_unlock(doneProcessesLock);
                 
             }
@@ -417,8 +422,6 @@ int main(int argc, char *argv[]) {
 
     printf("Iat variables %d %d %d \n", iat_mean, iat_min, iat_max);
     printf("Burst variables %d %d %d \n", burst_mean, burst_min, burst_max);
-
-    // Random variables
 
     // Get and record start time
     gettimeofday(&start, NULL);
@@ -607,24 +610,38 @@ int main(int argc, char *argv[]) {
         pthread_join(threads[i], NULL);
     }
 
-    // Free memory
-    // if (strcmp(scheduling_approach, "S") == 0) {
-    //     freeQueue(queues[0]);
-    //     free(locks[0]);
-    // }
-    // else {
-    //     for (int i = 0; i < num_of_processors; i++) {
-    //         freeQueue(queues[i]);
-    //         free(locks[i]);
-    //     }
-    // }
+    printf("\n---- DONE ----\n");
+    displayList(doneProcessesHead);
 
-    // freeQueue(doneProcessesHead);
-    // free(doneProcessesLock);
+    if (strcmp(scheduling_approach, "S") == 0) {
+        printf("\n---- QUEUE ----\n");
+        displayList(queues[0]);
+    }
+    else {
+        for (int i = 0; i < num_of_processors; i++) {
+            printf("\n---- QUEUE %d ----\n", i);
+            displayList(queues[i]);
+        }
+    }
+
+    // Free memory
+    if (strcmp(scheduling_approach, "S") == 0) {
+        freeQueue(queues[0]);
+        free(locks[0]);
+    }
+    else {
+        for (int i = 0; i < num_of_processors; i++) {
+            freeQueue(queues[i]);
+            free(locks[i]);
+        }
+    }
+
+    freeQueue(doneProcessesHead);
+    free(doneProcessesLock);
     
-    // free(queues);
-    // free(tails);
-    // free(locks);
+    free(queues);
+    free(tails);
+    free(locks);
 
 
     // delete finished does not work
