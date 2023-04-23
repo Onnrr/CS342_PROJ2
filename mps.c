@@ -35,6 +35,13 @@ typedef struct Arguments {
     int q;
 } Arguments;
 
+int queue_length(struct Node *root) {
+    if (root == NULL) {
+        return 0;
+    }
+    return 1 + queue_length(root->next);
+}
+
 int timeval_diff_ms(struct timeval* t1, struct timeval* t2) {
     int diff_sec = t2->tv_sec - t1->tv_sec;
     int diff_usec = t2->tv_usec - t1->tv_usec;
@@ -54,6 +61,7 @@ void displayList(struct Node* root) {
             printf("- id: %d\n", current->p->pid);
             printf("- burst length: %d\n", current->p->burst_length);
             printf("- arrival time: %d\n", current->p->arrival_time);
+            printf("- remaining time: %d\n", current->p->remaining_time);
             current = current->next;
         }
         printf("----------------\n");
@@ -166,6 +174,20 @@ void insertToEnd(struct Node** root, struct Node** tail, struct Node* newNode) {
     }
 }
 
+void insertToHead(struct Node** root, struct Node** tail, struct Node* newNode) {
+    // check if list is empty
+    if (*root == NULL) {
+        *root = newNode;
+        *tail = newNode;
+    }
+    else {
+        // insert to start
+        newNode->next = *root;
+        newNode->prev = NULL;
+        *root = newNode;
+    }
+}
+
 void insertAsc(struct Node** root, struct Node** tail, struct Node* newNode) {
     if (*root == NULL) {
         *root = newNode;
@@ -201,18 +223,22 @@ void insertAsc(struct Node** root, struct Node** tail, struct Node* newNode) {
 }
 
 void* process_thread(void *arguments) {
-    struct Arguments *args = arguments;
+    struct Arguments *args = (Arguments*)arguments;
     int index = args->index;
-    printf("%d", index);
+    printf("Created thread with q index %d\n", index);
     while (1) {
         pthread_mutex_lock(locks[index]);
         if (queues[index] == NULL) {
-            sleep(1 / 1000);
             pthread_mutex_unlock(locks[index]);
+            sleep(1 / 1000);
         }
         else {
             int burstFinished = 0;
             struct Node* cur;
+
+            printf("--------------\n");
+            printf("Processor reading from queue %d\n", index);
+            displayList(queues[index]);
 
             if (strcmp(args->algorithm, "FCFS") == 0 || strcmp(args->algorithm, "SJF") == 0) {
 
@@ -223,8 +249,12 @@ void* process_thread(void *arguments) {
                 
                 pthread_mutex_unlock(locks[index]);
 
-                if (cur->p->pid == -1)
+                if (cur->p->pid == -1) {
+                    pthread_mutex_lock(locks[index]);
+                    insertToHead(&queues[index], &tails[index], cur);
+                    pthread_mutex_unlock(locks[index]);
                     pthread_exit(0);
+                }
 
                 // sleep for the duration of burst
                 sleep(cur->p->burst_length / 1000);
@@ -234,10 +264,20 @@ void* process_thread(void *arguments) {
                 // retrieve process from the queue
                 cur = retrieveFirstNode(&queues[index], &tails[index]);
                 pthread_mutex_unlock(locks[index]);
-                printf("%d\n", cur->p->pid);
 
-                if (cur->p->pid == -1)
+                if (cur->p->pid == -1 && queue_length(queues[index]) == 0) {
+                    printf("Queue length is 0 and we found dummy\n");
+                    pthread_mutex_lock(locks[index]);
+                    insertToHead(&queues[index], &tails[index], cur);
+                    pthread_mutex_unlock(locks[index]);
                     pthread_exit(0);
+                }
+                else if (cur->p->pid == -1) {
+                    pthread_mutex_lock(locks[index]);
+                    insertToEnd(&queues[index], &tails[index], cur);
+                    pthread_mutex_unlock(locks[index]);
+                    continue;
+                }
 
                 if (cur->p->remaining_time <= args->q) {
                     sleep(cur->p->remaining_time / 1000);
@@ -275,7 +315,7 @@ void* process_thread(void *arguments) {
 int main(int argc, char *argv[]) {
     // Get and set args
     int num_of_processors = 2;
-    char* scheduling_approach = "M";
+    char* scheduling_approach = "S";
     char* queue_selection_method = "RM";
     char* algorithm = "RR";
     int quantum = 20;
@@ -356,15 +396,16 @@ int main(int argc, char *argv[]) {
     // Create processor threads
     pthread_t threads[num_of_processors];
     for (int i = 0; i < num_of_processors; i++){
-
-        if (strcmp(scheduling_approach, "S") == 0)
+        if (strcmp(scheduling_approach, "S") == 0) {
             args[i].index = 0;
-        else
+        }
+        else {
             args[i].index = i;
+        }
             
         args[i].algorithm = algorithm;
         args[i].q = quantum;
-        pthread_create(&threads[i], NULL, process_thread, (void*) &args);
+        pthread_create(&threads[i], NULL, process_thread, (void*) &args[i]);
     }
 
     FILE* fp;
@@ -404,15 +445,10 @@ int main(int argc, char *argv[]) {
         else if (strcmp(scheduling_approach,"M") == 0) {
             int q_index;
             if (strcmp(queue_selection_method,"RM") == 0) {
-                printf("\nIn queue selection\n");
-                printf("Cur id = %d\n", cur_id);
                 q_index = cur_id % num_of_processors;
-                printf("Selected queue = %d\n", q_index);
             }
             else if (strcmp(queue_selection_method,"LM") == 0) {
-                printf("\nIn load queue selection\n");
                 q_index = findLeastLoad(num_of_processors);
-                printf("Selected queue = %d\n", q_index);
             }
             pthread_mutex_lock(locks[q_index]);
             insertToEnd(&queues[q_index],&tails[q_index],createNode(p));
@@ -436,6 +472,9 @@ int main(int argc, char *argv[]) {
     if (strcmp(scheduling_approach, "S") == 0) {
         Process *p = (Process*)malloc(sizeof(struct Process));
         p->pid = -1;
+        p->burst_length = 10000;
+        p->remaining_time = 10000;
+        p->arrival_time = 10000;
         Node* dummy = createNode(p);
         pthread_mutex_lock(locks[0]);
         insertToEnd(&queues[0],&tails[0],dummy);
@@ -445,6 +484,9 @@ int main(int argc, char *argv[]) {
         for (int i = 0; i < num_of_processors; i++) {
             Process *p = (Process*)malloc(sizeof(struct Process));
             p->pid = -1;
+            p->burst_length = 10000;
+            p->remaining_time = 10000;
+            p->arrival_time = 10000;
             Node* dummy = createNode(p);
             pthread_mutex_lock(locks[i]);
             insertToEnd(&queues[i],&tails[i],dummy);
@@ -460,6 +502,7 @@ int main(int argc, char *argv[]) {
 
     // Wait for threads
     for (int i = 0; i < num_of_processors; i++) {
+        printf("Thread %d has finished", i);
         pthread_join(threads[i], NULL);
     }
 
