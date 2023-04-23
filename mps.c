@@ -88,7 +88,6 @@ int findLeastLoad(int num_of_proc) {
     int min;
     int minIndex = 0;
 
-
     for (int i = 0; i < num_of_proc; i++) {
         Node* cur = queues[i];
         int sum = 0;
@@ -139,7 +138,17 @@ struct Node* retrieveNode(struct Node** root, struct Node** tail, struct Node* d
 }
 
 struct Node* retrieveFirstNode(struct Node** root, struct Node** tail) {
-    return retrieveNode(&root, &tail, root);
+    return retrieveNode(root, tail, *root);
+}
+
+void deleteList(struct Node** root, struct Node** tail) {
+    struct Node* cur;
+
+    while (root != NULL) {
+        cur = retrieveFirstNode(root, tail);
+        free(cur->p);
+        free(cur);
+    }
 }
 
 void insertToEnd(struct Node** root, struct Node** tail, struct Node* newNode) {
@@ -194,54 +203,53 @@ void insertAsc(struct Node** root, struct Node** tail, struct Node* newNode) {
 void* process_thread(void *arguments) {
     struct Arguments *args = arguments;
     int index = args->index;
-    
+    printf("%d", index);
     while (1) {
-        mutex_lock(&locks[index]);
+        pthread_mutex_lock(locks[index]);
         if (queues[index] == NULL) {
-            sleep(1);
+            sleep(1 / 1000);
+            pthread_mutex_unlock(locks[index]);
         }
         else {
             int burstFinished = 0;
             struct Node* cur;
 
-            if (cur->p->pid = -1) {
-                mutex_unlock(&locks[index]);
-                pthread_exit(0);
-            }
-            else if (strcmp(args->algorithm, "FCFS")) {
-                // retrieve process from the queue
-                cur = retrieveFirstNode(&queues[index], &tails[index]);
-                mutex_unlock(&locks[index]);
+            if (strcmp(args->algorithm, "FCFS") == 0 || strcmp(args->algorithm, "SJF") == 0) {
+
+                if (strcmp(args->algorithm, "FCFS") == 0) 
+                    cur = retrieveFirstNode(&queues[index], &tails[index]);
+                else 
+                    cur = retrieveNode(&queues[index], &tails[index], findShortest(index));
+                
+                pthread_mutex_unlock(locks[index]);
+
+                if (cur->p->pid == -1)
+                    pthread_exit(0);
 
                 // sleep for the duration of burst
-                sleep(cur->p->burst_length);
-                burstFinished = 1;
-            }
-            else if (strcmp(args->algorithm, "SJF")) {
-                // find and retrieve shortest node
-                cur = retrieveNode(&queues[index], &tails[index], findShortest(index));
-                mutex_unlock(&locks[index]);
-
-                // sleep for duration of burst
-                sleep(cur->p->burst_length);
+                sleep(cur->p->burst_length / 1000);
                 burstFinished = 1;
             }
             else { // default RR
                 // retrieve process from the queue
                 cur = retrieveFirstNode(&queues[index], &tails[index]);
-                mutex_unlock(&locks[index]);
+                pthread_mutex_unlock(locks[index]);
+                printf("%d\n", cur->p->pid);
+
+                if (cur->p->pid == -1)
+                    pthread_exit(0);
 
                 if (cur->p->remaining_time <= args->q) {
-                    sleep(cur->p->remaining_time);
+                    sleep(cur->p->remaining_time / 1000);
                     burstFinished = 1;
                 }
                 else {
-                    sleep(args->q);
+                    sleep(args->q / 1000);
                     // update remaining time and add to tail
                     cur->p->remaining_time = cur->p->remaining_time - args->q;
-                    mutex_lock(&locks[index]);
+                    pthread_mutex_lock(locks[index]);
                     insertToEnd(&queues[index], &tails[index], cur);
-                    mutex_unlock(&locks[index]);
+                    pthread_mutex_unlock(locks[index]);
                 }
             }
             
@@ -249,15 +257,16 @@ void* process_thread(void *arguments) {
             if (burstFinished) {
                 // update information of process
                 struct Process* p = cur->p;
-                p->finish_time = gettimeofday(&start, NULL);
+                struct timeval burstFinishTime;
+                p->finish_time = gettimeofday(&burstFinishTime, NULL);
                 p->turnaround_time = p->finish_time - p->arrival_time;
                 p->remaining_time = 0;
                 p->processor_id = index;
 
                 // add to finished processes list
-                mutex_lock(&doneProcessesLock);
+                pthread_mutex_lock(doneProcessesLock);
                 insertAsc(&doneProcessesHead, &doneProcessesTail, cur);
-                mutex_unlock(&doneProcessesLock);
+                pthread_mutex_unlock(doneProcessesLock);
             }
         }
     }       
@@ -304,7 +313,7 @@ int main(int argc, char *argv[]) {
     printf("Sched approach = %s\n", scheduling_approach);
     printf("Queue selection method = %s\n", queue_selection_method);
     printf("Algorithm = %s\n", algorithm);
-    printf("quantum = %d\n", quantum);
+    printf("quantum= %d\n", quantum);
     printf("infile name = %s\n", infile_name);
     printf("out mode = %d\n", out_mode);
     printf("outfile name = %s\n", outfile_name);
@@ -338,14 +347,23 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    doneProcessesHead = NULL;
+    doneProcessesTail = NULL;
+    doneProcessesLock = (pthread_mutex_t*)malloc(sizeof(pthread_mutex_t));
+    pthread_mutex_init(doneProcessesLock, NULL);
+    
+    struct Arguments args[num_of_processors];
     // Create processor threads
     pthread_t threads[num_of_processors];
     for (int i = 0; i < num_of_processors; i++){
-        Arguments args;
-        args.index = i;
-        args.algorithm = algorithm;
-        args.q = quantum;
 
+        if (strcmp(scheduling_approach, "S") == 0)
+            args[i].index = 0;
+        else
+            args[i].index = i;
+            
+        args[i].algorithm = algorithm;
+        args[i].q = quantum;
         pthread_create(&threads[i], NULL, process_thread, (void*) &args);
     }
 
@@ -415,16 +433,19 @@ int main(int argc, char *argv[]) {
     }
 
     // Add dummy Nodes
-    Process *p = (Process*)malloc(sizeof(struct Process));
-    p->pid = -1;
-    Node* dummy = createNode(p);
     if (strcmp(scheduling_approach, "S") == 0) {
+        Process *p = (Process*)malloc(sizeof(struct Process));
+        p->pid = -1;
+        Node* dummy = createNode(p);
         pthread_mutex_lock(locks[0]);
         insertToEnd(&queues[0],&tails[0],dummy);
         pthread_mutex_unlock(locks[0]);
     }
     else {
         for (int i = 0; i < num_of_processors; i++) {
+            Process *p = (Process*)malloc(sizeof(struct Process));
+            p->pid = -1;
+            Node* dummy = createNode(p);
             pthread_mutex_lock(locks[i]);
             insertToEnd(&queues[i],&tails[i],dummy);
             pthread_mutex_unlock(locks[i]);
@@ -446,6 +467,8 @@ int main(int argc, char *argv[]) {
         printf("Queue %d\n", i);
         displayList(queues[i]);
     }
+
+    // delete finished does not work
 
     return 0;
 }
