@@ -22,6 +22,7 @@ typedef struct Process {
     int arrival_time;
     int remaining_time;
     int finish_time;
+    int waiting_time; //YYYYYYYYYYYYYYYYYYYOOOOOOOOOOOOOOOOOOOOOOOOKKKKKKKKKKKKKKK EKSİK
     int turnaround_time;
     int processor_id;
 } Process;
@@ -186,16 +187,6 @@ struct Node* retrieveFirstNode(struct Node** root, struct Node** tail) {
     return retrieveNode(root, tail, *root);
 }
 
-void deleteList(struct Node** root, struct Node** tail) {
-    struct Node* cur;
-
-    while (root != NULL) {
-        cur = retrieveFirstNode(root, tail);
-        free(cur->p);
-        free(cur);
-    }
-}
-
 void insertToEnd(struct Node** root, struct Node** tail, struct Node* newNode) {
     // check if list is empty
     if (*root == NULL) {
@@ -230,7 +221,7 @@ void insertAsc(struct Node** root, struct Node** tail, struct Node* newNode) {
         *root = newNode;
         *tail = newNode;
     }
-    else if ((*root)->p->pid < newNode->p->pid) {
+    else if ((*root)->p->pid >= newNode->p->pid) {
         newNode->next = *root;
         newNode->next->prev = newNode;
         *root = newNode;
@@ -239,7 +230,7 @@ void insertAsc(struct Node** root, struct Node** tail, struct Node* newNode) {
         // insert in the middle or end
         struct Node* cur = *root;
 
-        while (cur->next != NULL && cur->next->p->pid  >= newNode->p->pid ) {
+        while (cur->next != NULL && cur->next->p->pid < newNode->p->pid ) {
             cur = cur->next;
         }
 
@@ -273,9 +264,11 @@ void* process_thread(void *arguments) {
             int burstFinished = 0;
             struct Node* cur;
 
+            /* ADDS TO TURNAROUND TIME
             printf("--------------\n");
             printf("Processor reading from queue %d\n", index);
             displayList(queues[index]);
+            */
 
             if (strcmp(args->algorithm, "FCFS") == 0 || strcmp(args->algorithm, "SJF") == 0) {
 
@@ -342,7 +335,7 @@ void* process_thread(void *arguments) {
 
                 // add to finished processes list
                 pthread_mutex_lock(doneProcessesLock);
-                insertAsc(&doneProcessesHead, &doneProcessesTail, cur);
+                insertToEnd(&doneProcessesHead, &doneProcessesTail, cur);
                 pthread_mutex_unlock(doneProcessesLock);
                 
             }
@@ -423,9 +416,6 @@ int main(int argc, char *argv[]) {
     printf("Iat variables %d %d %d \n", iat_mean, iat_min, iat_max);
     printf("Burst variables %d %d %d \n", burst_mean, burst_min, burst_max);
 
-    // Get and record start time
-    gettimeofday(&start, NULL);
-
     // Create queue(s)
     if (strcmp(scheduling_approach, "S") == 0) {
         queues = (Node**)malloc(sizeof(struct Node*));
@@ -484,19 +474,23 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         int cur_id = 0;
+
+        // Get and record start time
+        gettimeofday(&start, NULL);
+    
         while ((read = getline(&line, &len, fp)) != -1) {
+
             // Process the line
             char* keyword = strtok(line, " ");
             char* burst = strtok(NULL, " ");
             int burst_l = atoi(burst);
 
-            struct timeval arrival;
-            gettimeofday(&arrival, NULL);
-
             Process *p = (Process*)malloc(sizeof(struct Process));
             p->pid = cur_id;
             p->burst_length = burst_l;
             p->remaining_time = burst_l;
+            struct timeval arrival;
+            gettimeofday(&arrival, NULL);
             p->arrival_time = timeval_diff_ms(&start, &arrival);
 
             if (strcmp(scheduling_approach,"S") == 0) {
@@ -624,6 +618,16 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    // Output results to console
+
+    printf("%-10s %-10s %-10s %-10s %-10s %-12s %-10s\n", "pid", "cpu", "bustlen", "arv", "finish", "waitingtime", "turnaround");
+    struct Node* cur = doneProcessesHead;
+    while (cur != NULL) {
+        struct Process* p = cur->p;
+        printf("%-10d %-10d %-10d %-10d %-10d %-12d %-10d\n", p->pid, p->processor_id, p->burst_length, p->arrival_time, p->finish_time, p->waiting_time, p->turnaround_time);
+        cur = cur->next;
+    }
+
     // Free memory
     if (strcmp(scheduling_approach, "S") == 0) {
         freeQueue(queues[0]);
@@ -642,9 +646,6 @@ int main(int argc, char *argv[]) {
     free(queues);
     free(tails);
     free(locks);
-
-
-    // delete finished does not work
 
     return 0;
 }
