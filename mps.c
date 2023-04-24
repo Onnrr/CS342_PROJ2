@@ -12,9 +12,9 @@ struct Node** queues;
 struct Node** tails;
 struct Node* doneProcessesHead;
 struct Node* doneProcessesTail;
-pthread_mutex_t* doneProcessesLock;
+pthread_mutex_t* doneProcessesLock, *startLock;
 pthread_mutex_t** locks;
-struct timeval start;
+struct timeval start, a, b;
 
 typedef struct Process {
     int pid;
@@ -259,10 +259,8 @@ void* process_thread(void *arguments) {
     else
         index = args->index;
 
-    struct timeval c, d;
     printf("Created thread with q index %d\n", args->index);
     while (1) {
-        gettimeofday(&c, NULL);
         pthread_mutex_lock(locks[index]);
         if (queues[index] == NULL) {
             pthread_mutex_unlock(locks[index]);
@@ -280,47 +278,25 @@ void* process_thread(void *arguments) {
             displayList(queues[index]);
             */
 
-            if (strcmp(args->algorithm, "FCFS") == 0 || strcmp(args->algorithm, "SJF") == 0) {
-
-                if (strcmp(args->algorithm, "FCFS") == 0) 
-                    cur = retrieveFirstNode(&queues[index], &tails[index]);
-                else 
-                    cur = retrieveNode(&queues[index], &tails[index], findShortest(index));
-                
-
-                if (cur->p->pid == -1) {
-                    insertToHead(&queues[index], &tails[index], cur);
-                    pthread_mutex_unlock(locks[index]);
-                    pthread_exit(0);
-                }
-                if (cur->p->waiting_time == 0) {
-                    cur->p->waiting_time = timeval_diff_ms(&start, &cur_time) - cur->p->arrival_time;
-                }
-                pthread_mutex_unlock(locks[index]);
-                // sleep for the duration of burst
-                usleep(cur->p->burst_length);
-                burstFinished = 1;
-            }
-            else { // default RR
-                // retrieve process from the queue
+            if (strcmp(args->algorithm, "FCFS") == 0 || strcmp(args->algorithm, "RR") == 0) 
                 cur = retrieveFirstNode(&queues[index], &tails[index]);
-                
-                if (cur->p->pid == -1 && queue_length(queues[index]) == 0) {
-                    printf("Queue length is 0 and we found dummy\n");
+            else if (strcmp(args->algorithm, "SJF") == 0)
+                cur = retrieveNode(&queues[index], &tails[index], findShortest(index));
+
+            if (cur->p->pid == -1 && queue_length(queues[index]) == 0) {
+                    printf("\nQueue length is 0 and we found dummy\n");
                     insertToHead(&queues[index], &tails[index], cur);
                     pthread_mutex_unlock(locks[index]);
                     pthread_exit(0);
-                }
-                else if (cur->p->pid == -1) {
-                    insertToEnd(&queues[index], &tails[index], cur);
-                    pthread_mutex_unlock(locks[index]);
-                    continue;
-                }
-                if (cur->p->waiting_time == 0) {
-                    cur->p->waiting_time = timeval_diff_ms(&start, &cur_time) - cur->p->arrival_time;
-                }
+            }
+            else if (cur->p->pid == -1) {
+                insertToEnd(&queues[index], &tails[index], cur);
                 pthread_mutex_unlock(locks[index]);
-
+                pthread_exit(0);
+            }
+            pthread_mutex_unlock(locks[index]);
+            
+            if (strcmp(args->algorithm, "RR") == 0) {
                 if (cur->p->remaining_time <= args->q) {
                     usleep(cur->p->remaining_time);
                     burstFinished = 1;
@@ -334,14 +310,19 @@ void* process_thread(void *arguments) {
                     pthread_mutex_unlock(locks[index]);
                 }
             }
-            
-
+            else {
+                struct timeval burstStartTime;
+                usleep(cur->p->burst_length);
+                burstFinished = 1;
+            }
             if (burstFinished) {
                 // update information of process
                 struct Process* p = cur->p;
                 struct timeval burstFinishTime;
                 gettimeofday(&burstFinishTime, NULL);
+                pthread_mutex_lock(startLock);
                 p->finish_time = timeval_diff_ms(&start, &burstFinishTime);
+                pthread_mutex_unlock(startLock);
                 p->turnaround_time = p->finish_time - p->arrival_time;
                 p->waiting_time = p->turnaround_time - p->burst_length;
                 p->remaining_time = 0;
@@ -352,13 +333,11 @@ void* process_thread(void *arguments) {
 
                 // add to finished processes list
                 pthread_mutex_lock(doneProcessesLock);
-                insertToEnd(&doneProcessesHead, &doneProcessesTail, cur); // could be adding to turnaround time (not sure)
+                insertAsc(&doneProcessesHead, &doneProcessesTail, cur); // could be adding to turnaround time (not sure)
                 pthread_mutex_unlock(doneProcessesLock);
-                
             }
+
         }
-        gettimeofday(&d, NULL);
-        printf("******************************************* %d\n", timeval_diff_ms(&c, &d));
     }       
 }
 
@@ -462,7 +441,9 @@ int main(int argc, char *argv[]) {
     doneProcessesHead = NULL;
     doneProcessesTail = NULL;
     doneProcessesLock = (pthread_mutex_t*)malloc(sizeof(pthread_mutex_t));
+    startLock = (pthread_mutex_t*)malloc(sizeof(pthread_mutex_t));
     pthread_mutex_init(doneProcessesLock, NULL);
+    pthread_mutex_init(startLock, NULL);
     
     struct Arguments args[num_of_processors];
     // Create processor threads
@@ -498,13 +479,14 @@ int main(int argc, char *argv[]) {
         while ((read = getline(&line, &len, fp)) != -1) {
             if (first) {
                 // Get and record start time
+                pthread_mutex_lock(startLock);
                 gettimeofday(&start, NULL);
+                pthread_mutex_unlock(startLock);
                 first = 0;
             }
             
             struct timeval arrival;
             gettimeofday(&arrival, NULL);
-
             
             // Process the line
             strtok(line, " ");
@@ -543,15 +525,8 @@ int main(int argc, char *argv[]) {
             strtok(line, " ");
             char* inter_arrival = strtok(NULL, " ");
             int iat = atoi(inter_arrival);
-            printf("iat: %d", iat);
-        
             cur_id++;
-            struct timeval a;
-            struct timeval b;
-            gettimeofday(&a, NULL);
             usleep(iat);
-            gettimeofday(&b, NULL);
-            printf("    -   %d\n", timeval_diff_ms(&a, &b));
         }
         // Free the memory allocated for the line
         free(line);
@@ -564,7 +539,9 @@ int main(int argc, char *argv[]) {
         int count = 0;
 
         // Get and record start time
+        pthread_mutex_lock(startLock);
         gettimeofday(&start, NULL);
+        pthread_mutex_unlock(startLock);
         while (count < pc) {
             struct timeval arrival;
             gettimeofday(&arrival, NULL);
@@ -633,7 +610,7 @@ int main(int argc, char *argv[]) {
 
     // Wait for threads
     for (int i = 0; i < num_of_processors; i++) {
-        printf("Thread %d has finished", i);
+        printf("\nThread %d has finished", i);
         pthread_join(threads[i], NULL);
     }
 
