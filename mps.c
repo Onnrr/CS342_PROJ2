@@ -271,6 +271,8 @@ void* process_thread(void *arguments) {
         else {
             int burstFinished = 0;
             struct Node* cur;
+            struct timeval cur_time;
+            gettimeofday(&cur_time, NULL);
 
             /* ADDS TO TURNAROUND TIME
             printf("--------------\n");
@@ -291,7 +293,9 @@ void* process_thread(void *arguments) {
                     pthread_mutex_unlock(locks[index]);
                     pthread_exit(0);
                 }
-
+                if (cur->p->waiting_time == 0) {
+                    cur->p->waiting_time = timeval_diff_ms(&start, &cur_time) - cur->p->arrival_time;
+                }
                 pthread_mutex_unlock(locks[index]);
                 // sleep for the duration of burst
                 usleep(cur->p->burst_length);
@@ -311,6 +315,9 @@ void* process_thread(void *arguments) {
                     insertToEnd(&queues[index], &tails[index], cur);
                     pthread_mutex_unlock(locks[index]);
                     continue;
+                }
+                if (cur->p->waiting_time == 0) {
+                    cur->p->waiting_time = timeval_diff_ms(&start, &cur_time) - cur->p->arrival_time;
                 }
                 pthread_mutex_unlock(locks[index]);
 
@@ -425,8 +432,8 @@ int main(int argc, char *argv[]) {
     printf("out mode = %d\n", out_mode);
     printf("outfile name = %s\n", outfile_name);
 
-    printf("Iat variables %d %d %d \n", iat_mean, iat_min, iat_max);
-    printf("Burst variables %d %d %d \n", burst_mean, burst_min, burst_max);
+    printf("Iat variables %d %d %d\n", iat_mean, iat_min, iat_max);
+    printf("Burst variables %d %d %d\n", burst_mean, burst_min, burst_max);
 
     // Create queue(s)
     if (strcmp(scheduling_approach, "S") == 0) {
@@ -486,14 +493,21 @@ int main(int argc, char *argv[]) {
         }
         int cur_id = 0;
 
-        // Get and record start time
-        gettimeofday(&start, NULL);
-    
+        int first = 1;
+        
         while ((read = getline(&line, &len, fp)) != -1) {
+            if (first) {
+                // Get and record start time
+                gettimeofday(&start, NULL);
+                first = 0;
+            }
+            
+            struct timeval arrival;
+            gettimeofday(&arrival, NULL);
 
             
             // Process the line
-            char* keyword = strtok(line, " ");
+            strtok(line, " ");
             char* burst = strtok(NULL, " ");
             int burst_l = atoi(burst);
 
@@ -501,8 +515,7 @@ int main(int argc, char *argv[]) {
             p->pid = cur_id;
             p->burst_length = burst_l;
             p->remaining_time = burst_l;
-            struct timeval arrival;
-            gettimeofday(&arrival, NULL);
+            
             p->arrival_time = timeval_diff_ms(&start, &arrival);
 
             if (strcmp(scheduling_approach,"S") == 0) {
@@ -527,7 +540,7 @@ int main(int argc, char *argv[]) {
             if (read == -1) {
                 break;
             }
-            keyword = strtok(line, " ");
+            strtok(line, " ");
             char* inter_arrival = strtok(NULL, " ");
             int iat = atoi(inter_arrival);
             printf("iat: %d", iat);
@@ -549,12 +562,15 @@ int main(int argc, char *argv[]) {
     else { // Random
         int cur_id = 0;
         int count = 0;
-        while (count < pc) {
-            // Generate random int
-            int burst_l = generateRandomInt(burst_min, burst_max, burst_mean);
 
+        // Get and record start time
+        gettimeofday(&start, NULL);
+        while (count < pc) {
             struct timeval arrival;
             gettimeofday(&arrival, NULL);
+
+            // Generate random int
+            int burst_l = generateRandomInt(burst_min, burst_max, burst_mean);
 
             Process *p = (Process*)malloc(sizeof(struct Process));
             p->pid = cur_id;
