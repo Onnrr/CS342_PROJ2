@@ -36,6 +36,7 @@ typedef struct Arguments {
     char* algorithm;
     int q;
     int single;
+    int out;
 } Arguments;
 
 int queue_length(struct Node *root) {
@@ -259,7 +260,7 @@ void* process_thread(void *arguments) {
     else
         index = args->index;
 
-    printf("Created thread with q index %d\n", args->index);
+    // printf("Created thread with q index %d\n", args->index);
     while (1) {
         pthread_mutex_lock(locks[index]);
         if (queues[index] == NULL) {
@@ -269,8 +270,6 @@ void* process_thread(void *arguments) {
         else {
             int burstFinished = 0;
             struct Node* cur;
-            struct timeval cur_time;
-            gettimeofday(&cur_time, NULL);
 
             if (strcmp(args->algorithm, "FCFS") == 0 || strcmp(args->algorithm, "RR") == 0) 
                 cur = retrieveFirstNode(&queues[index], &tails[index]);
@@ -278,7 +277,6 @@ void* process_thread(void *arguments) {
                 cur = retrieveNode(&queues[index], &tails[index], findShortest(index));
 
             if (cur->p->pid == -1 && queue_length(queues[index]) == 0) {
-                printf("\nQueue length is 0 and we found dummy\n");
                 insertToEnd(&queues[index], &tails[index], cur);
                 pthread_mutex_unlock(locks[index]);
                 pthread_exit(0);
@@ -290,6 +288,19 @@ void* process_thread(void *arguments) {
             }
             pthread_mutex_unlock(locks[index]);
             
+            struct Process* p = cur->p;
+
+            if (args->out == 3) 
+                printf("Burst %d is picked for CPU %d\n", p->pid, args->index);
+
+            struct timeval cur_time;
+            gettimeofday(&cur_time, NULL);
+            if (args->out == 2) {
+                pthread_mutex_lock(startLock);
+                printf("time=%d, cpu=%d, pid=%d, burstlen=%d, remainingtime=%d\n", timeval_diff_ms(&start, &cur_time), p->processor_id, p->pid, p->burst_length, p->remaining_time);
+                pthread_mutex_unlock(startLock);
+            }
+                
             if (strcmp(args->algorithm, "RR") == 0) {
                 if (cur->p->remaining_time <= args->q) {
                     usleep(cur->p->remaining_time * 1000);
@@ -297,6 +308,10 @@ void* process_thread(void *arguments) {
                 }
                 else {
                     usleep(args->q * 1000);
+
+                    if (args->out == 3) 
+                        printf("Timeslice of %d expired for Burst %d\n",  args->q, p->pid);
+
                     // update remaining time and add to tail
                     cur->p->remaining_time = cur->p->remaining_time - args->q;
                     pthread_mutex_lock(locks[index]);
@@ -305,14 +320,15 @@ void* process_thread(void *arguments) {
                 }
             }
             else {
-                struct timeval burstStartTime;
                 usleep(cur->p->burst_length * 1000);
                 burstFinished = 1;
             }
             if (burstFinished) {
+                
+                if (args->out == 3) 
+                        printf("Burst %d finished\n", p->pid);
+
                 // update information of process
-                struct Process* p = cur->p;
-                printf("Finidshed process %d on processor %d\n", p->pid, args->index);
                 struct timeval burstFinishTime;
                 gettimeofday(&burstFinishTime, NULL);
                 pthread_mutex_lock(startLock);
@@ -348,7 +364,7 @@ int main(int argc, char *argv[]) {
     char* outfile_name = "out.txt";
 
     // Burst will be generated random if random > 0, read file if random == 0
-    int random = 1;
+    int random = 0;
 
     // Random variables
     int iat_mean = 200;
@@ -374,7 +390,6 @@ int main(int argc, char *argv[]) {
             quantum = atoi(argv[i + 2]);
         }
         else if (strcmp(argv[i], "-i") == 0) {
-            random--;
             infile_name = argv[i + 1];
         }
         else if (strcmp(argv[i], "-m") == 0) {
@@ -397,6 +412,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    /*
     printf("Num of processors = %d\n", num_of_processors);
     printf("Sched approach = %s\n", scheduling_approach);
     printf("Queue selection method = %s\n", queue_selection_method);
@@ -407,7 +423,7 @@ int main(int argc, char *argv[]) {
     printf("outfile name = %s\n", outfile_name);
 
     printf("Iat variables %d %d %d\n", iat_mean, iat_min, iat_max);
-    printf("Burst variables %d %d %d\n", burst_mean, burst_min, burst_max);
+    printf("Burst variables %d %d %d\n", burst_mean, burst_min, burst_max); */
 
     // Create queue(s)
     if (strcmp(scheduling_approach, "S") == 0) {
@@ -450,6 +466,7 @@ int main(int argc, char *argv[]) {
         else 
             args[i].single = 0;
             
+        args[i].out = out_mode;
         args[i].algorithm = algorithm;
         args[i].q = quantum;
         pthread_create(&threads[i], NULL, process_thread, (void*) &args[i]);
@@ -496,6 +513,9 @@ int main(int argc, char *argv[]) {
             p->arrival_time = timeval_diff_ms(&start, &arrival);
 
             if (strcmp(scheduling_approach,"S") == 0) {
+                if (out_mode == 3) 
+                    printf("Burst %d is added to Queue 0\n", p->pid);
+
                 pthread_mutex_lock(locks[0]);
                 insertToEnd(&queues[0],&tails[0],createNode(p));
                 pthread_mutex_unlock(locks[0]);
@@ -508,6 +528,10 @@ int main(int argc, char *argv[]) {
                 else if (strcmp(queue_selection_method,"LM") == 0) {
                     q_index = findLeastLoad(num_of_processors);
                 }
+
+                if (out_mode == 3) 
+                    printf("Burst %d is added to Queue %d\n", p->pid, q_index);
+
                 pthread_mutex_lock(locks[q_index]);
                 insertToEnd(&queues[q_index],&tails[q_index],createNode(p));
                 pthread_mutex_unlock(locks[q_index]);
@@ -605,10 +629,10 @@ int main(int argc, char *argv[]) {
 
     // Wait for threads
     for (int i = 0; i < num_of_processors; i++) {
-        printf("\nThread %d has finished", i);
         pthread_join(threads[i], NULL);
     }
 
+    /*
     printf("\n---- DONE ----\n");
     displayList(doneProcessesHead);
 
@@ -622,7 +646,7 @@ int main(int argc, char *argv[]) {
             displayList(queues[i]);
         }
     }
-
+    */
     // Output results to console
 
     printf("%-10s %-10s %-10s %-10s %-10s %-12s %-10s\n", "pid", "cpu", "bustlen", "arv", "finish", "waitingtime", "turnaround");
