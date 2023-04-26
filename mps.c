@@ -22,7 +22,7 @@ typedef struct Process {
     int arrival_time;
     int remaining_time;
     int finish_time;
-    int waiting_time; //YYYYYYYYYYYYYYYYYYYOOOOOOOOOOOOOOOOOOOOOOOOKKKKKKKKKKKKKKK EKSİK
+    int waiting_time; 
     int turnaround_time;
     int processor_id;
 } Process;
@@ -83,7 +83,7 @@ void freeQueue(Node* root) {
 int timeval_diff_ms(struct timeval* t1, struct timeval* t2) {
     int diff_sec = t2->tv_sec - t1->tv_sec;
     int diff_usec = t2->tv_usec - t1->tv_usec;
-    int diff_us = diff_sec * 1000000 + diff_usec;
+    int diff_us = diff_sec * 1000 + diff_usec / 1000;
     return diff_us;
 }
 
@@ -264,7 +264,7 @@ void* process_thread(void *arguments) {
         pthread_mutex_lock(locks[index]);
         if (queues[index] == NULL) {
             pthread_mutex_unlock(locks[index]);
-            usleep(1);
+            usleep(1 * 1000);
         }
         else {
             int burstFinished = 0;
@@ -272,37 +272,31 @@ void* process_thread(void *arguments) {
             struct timeval cur_time;
             gettimeofday(&cur_time, NULL);
 
-            /* ADDS TO TURNAROUND TIME
-            printf("--------------\n");
-            printf("Processor reading from queue %d\n", index);
-            displayList(queues[index]);
-            */
-
             if (strcmp(args->algorithm, "FCFS") == 0 || strcmp(args->algorithm, "RR") == 0) 
                 cur = retrieveFirstNode(&queues[index], &tails[index]);
             else if (strcmp(args->algorithm, "SJF") == 0)
                 cur = retrieveNode(&queues[index], &tails[index], findShortest(index));
 
             if (cur->p->pid == -1 && queue_length(queues[index]) == 0) {
-                    printf("\nQueue length is 0 and we found dummy\n");
-                    insertToHead(&queues[index], &tails[index], cur);
-                    pthread_mutex_unlock(locks[index]);
-                    pthread_exit(0);
-            }
-            else if (cur->p->pid == -1) {
+                printf("\nQueue length is 0 and we found dummy\n");
                 insertToEnd(&queues[index], &tails[index], cur);
                 pthread_mutex_unlock(locks[index]);
                 pthread_exit(0);
+            }
+            else if (cur->p->pid == -1 && strcmp(args->algorithm, "RR") == 0 && queue_length(queues[index]) != 0) {
+                insertToEnd(&queues[index], &tails[index], cur);
+                pthread_mutex_unlock(locks[index]);
+                continue;
             }
             pthread_mutex_unlock(locks[index]);
             
             if (strcmp(args->algorithm, "RR") == 0) {
                 if (cur->p->remaining_time <= args->q) {
-                    usleep(cur->p->remaining_time);
+                    usleep(cur->p->remaining_time * 1000);
                     burstFinished = 1;
                 }
                 else {
-                    usleep(args->q);
+                    usleep(args->q * 1000);
                     // update remaining time and add to tail
                     cur->p->remaining_time = cur->p->remaining_time - args->q;
                     pthread_mutex_lock(locks[index]);
@@ -312,12 +306,13 @@ void* process_thread(void *arguments) {
             }
             else {
                 struct timeval burstStartTime;
-                usleep(cur->p->burst_length);
+                usleep(cur->p->burst_length * 1000);
                 burstFinished = 1;
             }
             if (burstFinished) {
                 // update information of process
                 struct Process* p = cur->p;
+                printf("Finidshed process %d on processor %d\n", p->pid, args->index);
                 struct timeval burstFinishTime;
                 gettimeofday(&burstFinishTime, NULL);
                 pthread_mutex_lock(startLock);
@@ -526,7 +521,7 @@ int main(int argc, char *argv[]) {
             char* inter_arrival = strtok(NULL, " ");
             int iat = atoi(inter_arrival);
             cur_id++;
-            usleep(iat);
+            usleep(iat * 1000);
         }
         // Free the memory allocated for the line
         free(line);
@@ -577,7 +572,7 @@ int main(int argc, char *argv[]) {
         
             cur_id++;
 
-            usleep(iat);
+            usleep(iat * 1000);
             count++;
         }
     }
@@ -632,11 +627,16 @@ int main(int argc, char *argv[]) {
 
     printf("%-10s %-10s %-10s %-10s %-10s %-12s %-10s\n", "pid", "cpu", "bustlen", "arv", "finish", "waitingtime", "turnaround");
     struct Node* cur = doneProcessesHead;
+    int turnAroundSum = 0;
+    int processCount = 0;
     while (cur != NULL) {
         struct Process* p = cur->p;
+        processCount++;
+        turnAroundSum += p->turnaround_time;
         printf("%-10d %-10d %-10d %-10d %-10d %-12d %-10d\n", p->pid, p->processor_id, p->burst_length, p->arrival_time, p->finish_time, p->waiting_time, p->turnaround_time);
         cur = cur->next;
     }
+    printf("average turnaround time: %d ms\n", turnAroundSum / processCount);
 
     // Free memory
     if (strcmp(scheduling_approach, "S") == 0) {
