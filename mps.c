@@ -434,7 +434,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    
+    /*
     printf("Num of processors = %d\n", num_of_processors);
     printf("Sched approach = %s\n", scheduling_approach);
     printf("Queue selection method = %s\n", queue_selection_method);
@@ -446,7 +446,8 @@ int main(int argc, char *argv[]) {
 
     printf("Iat variables %d %d %d\n", iat_mean, iat_min, iat_max);
     printf("Burst variables %d %d %d\n", burst_mean, burst_min, burst_max); 
-    printf("Random %d\n", random);
+    printf("Random %d\n", random);*/
+    
     // Create queue(s)
     if (strcmp(scheduling_approach, "S") == 0) {
         queues = (Node**)malloc(sizeof(struct Node*));
@@ -698,7 +699,7 @@ int main(int argc, char *argv[]) {
         }
     }
 */
-    // Output results to console
+    // Output results to console or file
 
     pthread_mutex_lock(outputLock);
     char temp[1000] = "";
