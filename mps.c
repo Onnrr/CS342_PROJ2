@@ -12,9 +12,10 @@ struct Node** queues;
 struct Node** tails;
 struct Node* doneProcessesHead;
 struct Node* doneProcessesTail;
-pthread_mutex_t* doneProcessesLock, *startLock;
+pthread_mutex_t* doneProcessesLock, *startLock, *outputLock;
 pthread_mutex_t** locks;
-struct timeval start, a, b;
+struct timeval start;
+char output[] = "";
 
 typedef struct Process {
     int pid;
@@ -290,14 +291,23 @@ void* process_thread(void *arguments) {
             
             struct Process* p = cur->p;
 
-            if (args->out == 3) 
-                printf("Burst %d is picked for CPU %d\n", p->pid, args->index);
+            if (args->out == 3) {
+                char temp[1000] = "";
+                sprintf(temp, "Burst %d is picked for CPU %d\n", p->pid, args->index);
+                pthread_mutex_lock(outputLock);
+                strcat(output, temp);
+                pthread_mutex_unlock(outputLock);
+            }
 
             struct timeval cur_time;
             gettimeofday(&cur_time, NULL);
             if (args->out == 2) {
-                pthread_mutex_lock(startLock);
-                printf("time=%d, cpu=%d, pid=%d, burstlen=%d, remainingtime=%d\n", timeval_diff_ms(&start, &cur_time), p->processor_id, p->pid, p->burst_length, p->remaining_time);
+                pthread_mutex_lock(startLock);                
+                pthread_mutex_lock(outputLock);
+                char temp[1000] = "";
+                sprintf(temp, "time=%d, cpu=%d, pid=%d, burstlen=%d, remainingtime=%d\n", timeval_diff_ms(&start, &cur_time), p->processor_id, p->pid, p->burst_length, p->remaining_time);
+                strcat(output, temp);
+                pthread_mutex_unlock(outputLock);
                 pthread_mutex_unlock(startLock);
             }
                 
@@ -309,8 +319,13 @@ void* process_thread(void *arguments) {
                 else {
                     usleep(args->q * 1000);
 
-                    if (args->out == 3) 
-                        printf("Timeslice of %d expired for Burst %d\n",  args->q, p->pid);
+                    if (args->out == 3) {
+                        char temp[1000] = "";
+                        sprintf(temp, "Timeslice of %d expired for Burst %d\n",  args->q, p->pid);
+                        pthread_mutex_lock(outputLock);
+                        strcat(output, temp);
+                        pthread_mutex_unlock(outputLock);
+                    }
 
                     // update remaining time and add to tail
                     cur->p->remaining_time = cur->p->remaining_time - args->q;
@@ -325,8 +340,13 @@ void* process_thread(void *arguments) {
             }
             if (burstFinished) {
                 
-                if (args->out == 3) 
-                        printf("Burst %d finished\n", p->pid);
+                if (args->out == 3) {
+                    char temp[1000] = "";
+                    sprintf(temp, "Burst %d finished\n", p->pid);
+                    pthread_mutex_lock(outputLock);
+                    strcat(output, temp);
+                    pthread_mutex_unlock(outputLock);
+                }
 
                 // update information of process
                 struct timeval burstFinishTime;
@@ -361,7 +381,7 @@ int main(int argc, char *argv[]) {
     int quantum = 20;
     char* infile_name = "in.txt";
     int out_mode = 1;
-    char* outfile_name = "out.txt";
+    char* outfile_name = NULL;
 
     // Burst will be generated random if random > 0, read file if random == 0
     int random = 0;
@@ -453,8 +473,10 @@ int main(int argc, char *argv[]) {
     doneProcessesTail = NULL;
     doneProcessesLock = (pthread_mutex_t*)malloc(sizeof(pthread_mutex_t));
     startLock = (pthread_mutex_t*)malloc(sizeof(pthread_mutex_t));
+    outputLock = (pthread_mutex_t*)malloc(sizeof(pthread_mutex_t));
     pthread_mutex_init(doneProcessesLock, NULL);
     pthread_mutex_init(startLock, NULL);
+    pthread_mutex_init(outputLock, NULL);
     
     struct Arguments args[num_of_processors];
     // Create processor threads
@@ -513,8 +535,13 @@ int main(int argc, char *argv[]) {
             p->arrival_time = timeval_diff_ms(&start, &arrival);
 
             if (strcmp(scheduling_approach,"S") == 0) {
-                if (out_mode == 3) 
-                    printf("Burst %d is added to Queue 0\n", p->pid);
+                if (out_mode == 3) {
+                    char temp[1000] = "";
+                    sprintf(temp, "Burst %d is added to Queue 0\n", p->pid);
+                    pthread_mutex_lock(outputLock);
+                    strcat(output, temp);
+                    pthread_mutex_unlock(outputLock);
+                }
 
                 pthread_mutex_lock(locks[0]);
                 insertToEnd(&queues[0],&tails[0],createNode(p));
@@ -529,8 +556,13 @@ int main(int argc, char *argv[]) {
                     q_index = findLeastLoad(num_of_processors);
                 }
 
-                if (out_mode == 3) 
-                    printf("Burst %d is added to Queue %d\n", p->pid, q_index);
+                if (out_mode == 3) {
+                    char temp[1000] = "";
+                    sprintf(temp, "Burst %d is added to Queue %d\n", p->pid, q_index);
+                    pthread_mutex_lock(outputLock);
+                    strcat(output, temp);
+                    pthread_mutex_unlock(outputLock);
+                }
 
                 pthread_mutex_lock(locks[q_index]);
                 insertToEnd(&queues[q_index],&tails[q_index],createNode(p));
@@ -649,7 +681,11 @@ int main(int argc, char *argv[]) {
     */
     // Output results to console
 
-    printf("%-10s %-10s %-10s %-10s %-10s %-12s %-10s\n", "pid", "cpu", "bustlen", "arv", "finish", "waitingtime", "turnaround");
+    pthread_mutex_lock(outputLock);
+    char temp[1000] = "";
+    sprintf(temp, "%-10s %-10s %-10s %-10s %-10s %-12s %-10s\n", "pid", "cpu", "bustlen", "arv", "finish", "waitingtime", "turnaround");
+    strcat(output, temp);
+
     struct Node* cur = doneProcessesHead;
     int turnAroundSum = 0;
     int processCount = 0;
@@ -657,10 +693,22 @@ int main(int argc, char *argv[]) {
         struct Process* p = cur->p;
         processCount++;
         turnAroundSum += p->turnaround_time;
-        printf("%-10d %-10d %-10d %-10d %-10d %-12d %-10d\n", p->pid, p->processor_id, p->burst_length, p->arrival_time, p->finish_time, p->waiting_time, p->turnaround_time);
+        char t[1000] = "";
+        sprintf(t, "%-10d %-10d %-10d %-10d %-10d %-12d %-10d\n", p->pid, p->processor_id, p->burst_length, p->arrival_time, p->finish_time, p->waiting_time, p->turnaround_time);
+        strcat(output, t);
         cur = cur->next;
     }
-    printf("average turnaround time: %d ms\n", turnAroundSum / processCount);
+    sprintf(temp, "average turnaround time: %d ms\n", turnAroundSum / processCount);
+    if (outfile_name) {
+        FILE *out;
+        out = fopen(outfile_name, "w");
+        fprintf(out, "%s", output);
+        fclose(out);
+    }
+    else {
+        printf("%s", output);
+    }
+    pthread_mutex_unlock(outputLock);
 
     // Free memory
     if (strcmp(scheduling_approach, "S") == 0) {
@@ -676,6 +724,8 @@ int main(int argc, char *argv[]) {
 
     freeQueue(doneProcessesHead);
     free(doneProcessesLock);
+    free(startLock);
+    free(outputLock);
     
     free(queues);
     free(tails);
