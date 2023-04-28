@@ -778,6 +778,9 @@ int main(int argc, char *argv[]) {
     free(doneProcessesLock);
     free(startLock);
     free(outputLock);
+
+    free(empty_cv);
+    free(cv_lock);
     
     free(queues);
     free(tails);
